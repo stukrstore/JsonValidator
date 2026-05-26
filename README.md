@@ -4,6 +4,35 @@ Web-based test page that demonstrates Azure **Cosmos DB for MongoDB (vCore)** / 
 `$jsonSchema` validator behavior, including required-field enforcement and **schema versioning**
 (V1 → V2) via `collMod`.
 
+## 🔗 Live test page
+
+**👉 https://jsonvalidator-app.gentlewave-de82ca01.koreacentral.azurecontainerapps.io/**
+
+Quick walkthrough (no setup required — just click the link above):
+
+1. **[Open the test page](https://jsonvalidator-app.gentlewave-de82ca01.koreacentral.azurecontainerapps.io/)**
+   — the status bar at the top reports `Connected.` once the app reaches `mskr-documentdb`.
+2. In **section 1 — Apply schema validator**, leave the defaults
+   (`Version = V2`, `validationLevel = strict`, `validationAction = error`) and click
+   **Apply validator**. This creates the `jsonvalidator.requests` collection with the V2
+   `$jsonSchema` validator. The status bar will now show `mode=server-enforced` and
+   `schema_version pattern=^v2$`.
+3. In **section 2 — Insert a document**, click **Insert** with the pre-filled sample.
+   It satisfies V2, so the response is `{ "ok": true, "enforcedBy": "server", "insertedId": ... }`.
+4. Click **[Sample: missing channel](https://jsonvalidator-app.gentlewave-de82ca01.koreacentral.azurecontainerapps.io/#)** then **Insert** — the cluster rejects the
+   document with `code: 121, "Document failed validation"` because `channel` is required in V2.
+5. Click **[Sample: missing request_id](https://jsonvalidator-app.gentlewave-de82ca01.koreacentral.azurecontainerapps.io/#)** then **Insert** — same rejection.
+6. To try a schema migration, change **Version** to **V1**, set **validationLevel** to
+   **moderate**, and click **Apply validator** again. The app issues `collMod` and the status bar
+   updates to show V1 is now active. Existing V2 documents are kept; new inserts must satisfy V1.
+7. Click **Load recent (10)** in **section 3** to see what was actually stored.
+
+The two raw validators used by the page are displayed verbatim at the bottom of the page for
+reference.
+
+> Note: the page is public for demo convenience. Don't store sensitive data — anyone with the URL
+> can apply validators, insert documents, and drop the collection.
+
 Reference: [MS Learn — `$jsonSchema`](https://learn.microsoft.com/en-us/documentdb/query/operators/evaluation-query/$jsonschema)
 
 ## Architecture
