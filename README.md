@@ -117,7 +117,7 @@ python app.py
 
 ### URL-encoding the password
 
-The password contains characters that must be percent-encoded in the SRV URI:
+If the password contains URI-reserved characters, percent-encode them in the SRV URI:
 
 | Char | Encoded |
 |---|---|
@@ -126,8 +126,6 @@ The password contains characters that must be percent-encoded in the SRV URI:
 | `/` | `%2F` |
 | `:` | `%3A` |
 | `?` | `%3F` |
-
-Example: `REDACTED_PASSWORD` → `REDACTED_PASSWORD`.
 
 ## Deploy to Azure Container Apps
 
