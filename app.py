@@ -1,0 +1,366 @@
+import json
+import os
+import re
+from datetime import datetime, timezone
+
+from dotenv import load_dotenv
+from flask import Flask, jsonify, render_template, request
+from pymongo import MongoClient
+from pymongo.errors import OperationFailure, PyMongoError
+
+load_dotenv()
+
+MONGODB_URI = os.environ.get("MONGODB_URI", "")
+MONGODB_DB = os.environ.get("MONGODB_DB", "jsonvalidator")
+MONGODB_COLLECTION = os.environ.get("MONGODB_COLLECTION", "requests")
+
+app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET", "dev-secret")
+
+_client: MongoClient | None = None
+
+
+def client() -> MongoClient:
+    global _client
+    if _client is None:
+        if not MONGODB_URI:
+            raise RuntimeError("MONGODB_URI is not set")
+        _client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=8000)
+    return _client
+
+
+def db():
+    return client()[MONGODB_DB]
+
+
+# ---- Validators (DocumentDB / Cosmos DB for MongoDB vCore $jsonSchema) ----
+
+V1_VALIDATOR = {
+    "$jsonSchema": {
+        "bsonType": "object",
+        "required": ["request_id", "schema_version"],
+        "properties": {
+            "request_id": {"bsonType": "string", "minLength": 1,
+                           "description": "Mandatory unique request id"},
+            "schema_version": {"bsonType": "string", "pattern": "^v1$",
+                               "description": "Schema version tag"},
+            "request_status": {"bsonType": "string"},
+            "event": {"bsonType": "string"},
+            "action": {"bsonType": ["string", "null"]},
+            "comments": {"bsonType": ["string", "null"]},
+            "file_path": {"bsonType": ["string", "null"]},
+            "channel": {"bsonType": ["string", "null"]},
+            "request_received_date_time": {"bsonType": "date"},
+        },
+    }
+}
+
+V2_VALIDATOR = {
+    "$jsonSchema": {
+        "bsonType": "object",
+        "required": ["request_id", "channel", "schema_version"],
+        "properties": {
+            "request_id": {"bsonType": "string", "minLength": 1,
+                           "description": "Mandatory unique request id"},
+            "channel": {"bsonType": "string", "minLength": 1,
+                        "description": "Mandatory channel (added in V2)"},
+            "schema_version": {"bsonType": "string", "pattern": "^v2$",
+                               "description": "Schema version tag"},
+            "request_status": {"bsonType": "string"},
+            "event": {"bsonType": "string"},
+            "action": {"bsonType": ["string", "null"]},
+            "comments": {"bsonType": ["string", "null"]},
+            "file_path": {"bsonType": ["string", "null"]},
+            "request_received_date_time": {"bsonType": "date"},
+        },
+    }
+}
+
+VALIDATORS = {"v1": V1_VALIDATOR, "v2": V2_VALIDATOR}
+
+# Tracks the validator the user asked us to apply, so we can fall back to
+# client-side enforcement when the cluster reports the validator command is
+# not supported (Cosmos DB for MongoDB vCore currently returns CommandNotSupported
+# for createCollection/collMod with `validator`).
+_active_state = {
+    "version": None,           # "v1" / "v2" / None
+    "server_enforced": False,  # True iff cluster accepted the $jsonSchema
+}
+
+
+_BSON_TYPE_PYTHON = {
+    "string": (str,),
+    "int": (int,),
+    "long": (int,),
+    "double": (float, int),
+    "decimal": (float, int),
+    "number": (int, float),
+    "bool": (bool,),
+    "boolean": (bool,),
+    "object": (dict,),
+    "array": (list,),
+    "date": (datetime,),
+    "null": (type(None),),
+}
+
+
+def _check_type(value, bson_type):
+    types = bson_type if isinstance(bson_type, list) else [bson_type]
+    for t in types:
+        py = _BSON_TYPE_PYTHON.get(t)
+        if py and isinstance(value, py):
+            # Special-case: bool is a subclass of int — reject bool when only
+            # numeric types are allowed.
+            if isinstance(value, bool) and t in ("int", "long", "double",
+                                                  "decimal", "number"):
+                continue
+            return True
+    return False
+
+
+def validate_with_schema(doc, validator):
+    """Lightweight Python implementation of the subset of $jsonSchema used
+    in this demo. Returns a list of error strings; empty list = valid."""
+    errors: list[str] = []
+    schema = validator.get("$jsonSchema", validator)
+    if not isinstance(doc, dict):
+        return ["root document must be an object"]
+
+    for field in schema.get("required", []):
+        if field not in doc:
+            errors.append(f"required field missing: '{field}'")
+
+    for field, rule in schema.get("properties", {}).items():
+        if field not in doc:
+            continue
+        value = doc[field]
+        bt = rule.get("bsonType")
+        if bt is not None and not _check_type(value, bt):
+            errors.append(f"field '{field}' must be of bsonType {bt}, "
+                          f"got {type(value).__name__}")
+            continue
+        if "minLength" in rule and isinstance(value, str) \
+                and len(value) < rule["minLength"]:
+            errors.append(f"field '{field}' shorter than minLength="
+                          f"{rule['minLength']}")
+        if "pattern" in rule and isinstance(value, str) \
+                and not re.search(rule["pattern"], value):
+            errors.append(f"field '{field}' does not match pattern "
+                          f"{rule['pattern']!r}")
+    return errors
+
+
+def _coerce_dates(obj):
+    """Convert MongoDB extended-JSON-ish {'$date': '...'} into datetime.
+
+    Walks dicts/lists recursively. Matches the sample document from the spec.
+    """
+    if isinstance(obj, dict):
+        if set(obj.keys()) == {"$date"} and isinstance(obj["$date"], str):
+            raw = obj["$date"].replace("Z", "+00:00")
+            return datetime.fromisoformat(raw)
+        return {k: _coerce_dates(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_coerce_dates(v) for v in obj]
+    return obj
+
+
+def _json_safe(obj):
+    if isinstance(obj, datetime):
+        return obj.astimezone(timezone.utc).isoformat()
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_json_safe(v) for v in obj]
+    return obj
+
+
+# ---- Routes ----
+
+@app.route("/")
+def index():
+    return render_template(
+        "index.html",
+        db_name=MONGODB_DB,
+        coll_name=MONGODB_COLLECTION,
+        v1=json.dumps(V1_VALIDATOR, indent=2),
+        v2=json.dumps(V2_VALIDATOR, indent=2),
+    )
+
+
+@app.route("/api/health")
+def health():
+    try:
+        client().admin.command("ping")
+        return jsonify(ok=True, db=MONGODB_DB, collection=MONGODB_COLLECTION)
+    except PyMongoError as e:
+        return jsonify(ok=False, error=str(e)), 503
+
+
+@app.route("/api/status")
+def status():
+    """Return current collection validator (if any) and document count."""
+    try:
+        info = db().command({"listCollections": 1,
+                             "filter": {"name": MONGODB_COLLECTION}})
+        batch = info.get("cursor", {}).get("firstBatch", [])
+        exists = bool(batch)
+        opts = batch[0].get("options", {}) if exists else {}
+        count = db()[MONGODB_COLLECTION].estimated_document_count() if exists else 0
+        return jsonify(
+            exists=exists,
+            validator=opts.get("validator"),
+            validationLevel=opts.get("validationLevel"),
+            validationAction=opts.get("validationAction"),
+            count=count,
+            activeVersion=_active_state["version"],
+            serverEnforced=_active_state["server_enforced"],
+        )
+    except PyMongoError as e:
+        return jsonify(error=str(e)), 500
+
+
+@app.route("/api/apply-validator", methods=["POST"])
+def apply_validator():
+    """Try to create collection (or collMod) with the chosen validator.
+
+    If the cluster does not yet support server-side `$jsonSchema` (Cosmos DB
+    for MongoDB vCore returns CommandNotSupported / code 115), we still
+    remember the choice so /api/insert can enforce it client-side.
+    """
+    version = (request.json or {}).get("version", "v1").lower()
+    level = (request.json or {}).get("validationLevel", "strict")
+    action = (request.json or {}).get("validationAction", "error")
+    if version not in VALIDATORS:
+        return jsonify(error=f"Unknown version: {version}"), 400
+    validator = VALIDATORS[version]
+    server_error = None
+    server_enforced = False
+    mode = "client-side-only"
+    try:
+        existing = db().command(
+            {"listCollections": 1, "filter": {"name": MONGODB_COLLECTION}}
+        )
+        exists = bool(existing.get("cursor", {}).get("firstBatch"))
+        try:
+            if not exists:
+                db().create_collection(
+                    MONGODB_COLLECTION,
+                    validator=validator,
+                    validationLevel=level,
+                    validationAction=action,
+                )
+                mode = "createCollection"
+            else:
+                db().command({
+                    "collMod": MONGODB_COLLECTION,
+                    "validator": validator,
+                    "validationLevel": level,
+                    "validationAction": action,
+                })
+                mode = "collMod"
+            server_enforced = True
+        except OperationFailure as e:
+            if getattr(e, "code", None) == 115:
+                # Cluster does not yet support server-side $jsonSchema.
+                # Ensure the collection exists anyway so inserts work, and
+                # we'll enforce the validator client-side instead.
+                if not exists:
+                    db().create_collection(MONGODB_COLLECTION)
+                server_error = (
+                    "Cluster returned CommandNotSupported (code 115) for "
+                    "server-side $jsonSchema. Falling back to client-side "
+                    "enforcement inside this app."
+                )
+            else:
+                raise
+    except PyMongoError as e:
+        return jsonify(ok=False, error=str(e)), 500
+
+    _active_state["version"] = version
+    _active_state["server_enforced"] = server_enforced
+    return jsonify(
+        ok=True,
+        mode=mode,
+        version=version,
+        validationLevel=level,
+        validationAction=action,
+        serverEnforced=server_enforced,
+        serverNote=server_error,
+    )
+
+
+@app.route("/api/drop", methods=["POST"])
+def drop():
+    try:
+        db().drop_collection(MONGODB_COLLECTION)
+        _active_state["version"] = None
+        _active_state["server_enforced"] = False
+        return jsonify(ok=True)
+    except PyMongoError as e:
+        return jsonify(ok=False, error=str(e)), 500
+
+
+@app.route("/api/insert", methods=["POST"])
+def insert():
+    raw = (request.json or {}).get("document")
+    if raw is None:
+        return jsonify(ok=False, error="Missing 'document' field"), 400
+    try:
+        if isinstance(raw, str):
+            doc = json.loads(raw)
+        else:
+            doc = raw
+    except json.JSONDecodeError as e:
+        return jsonify(ok=False, error=f"Invalid JSON: {e}"), 400
+
+    doc = _coerce_dates(doc)
+
+    # Client-side validation when the cluster did not accept the validator.
+    if _active_state["version"] and not _active_state["server_enforced"]:
+        errs = validate_with_schema(doc, VALIDATORS[_active_state["version"]])
+        if errs:
+            return jsonify(
+                ok=False,
+                enforcedBy="client",
+                version=_active_state["version"],
+                error="Document failed $jsonSchema validation",
+                details=errs,
+            ), 400
+
+    try:
+        result = db()[MONGODB_COLLECTION].insert_one(doc)
+        return jsonify(
+            ok=True,
+            insertedId=str(result.inserted_id),
+            enforcedBy="server" if _active_state["server_enforced"] else
+                       ("client" if _active_state["version"] else "none"),
+        )
+    except OperationFailure as e:
+        details = e.details if hasattr(e, "details") else {}
+        return jsonify(
+            ok=False,
+            enforcedBy="server",
+            error=str(e),
+            code=getattr(e, "code", None),
+            details=_json_safe(details),
+        ), 400
+    except PyMongoError as e:
+        return jsonify(ok=False, error=str(e)), 500
+
+
+@app.route("/api/recent")
+def recent():
+    try:
+        cursor = db()[MONGODB_COLLECTION].find().sort("_id", -1).limit(10)
+        docs = []
+        for d in cursor:
+            d["_id"] = str(d["_id"])
+            docs.append(_json_safe(d))
+        return jsonify(ok=True, docs=docs)
+    except PyMongoError as e:
+        return jsonify(ok=False, error=str(e)), 500
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)), debug=True)

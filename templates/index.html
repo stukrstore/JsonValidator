@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>JsonValidator — DocumentDB $jsonSchema test page</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <header>
+    <h1>JsonValidator</h1>
+    <p>
+      Test page for Azure Cosmos DB for MongoDB (vCore) <code>$jsonSchema</code> validator.
+      Target database: <code>{{ db_name }}</code>, collection: <code>{{ coll_name }}</code>.
+    </p>
+    <div id="status-bar">Checking connection…</div>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>1. Apply schema validator</h2>
+      <p>
+        Choose a schema version, then apply it to the collection. The page will call
+        <code>createCollection</code> on first use and <code>collMod</code> afterwards.
+      </p>
+      <div class="row">
+        <label>Version
+          <select id="version">
+            <option value="v1">V1 — request_id required</option>
+            <option value="v2" selected>V2 — request_id + channel required</option>
+          </select>
+        </label>
+        <label>validationLevel
+          <select id="level">
+            <option value="strict" selected>strict</option>
+            <option value="moderate">moderate</option>
+            <option value="off">off</option>
+          </select>
+        </label>
+        <label>validationAction
+          <select id="action">
+            <option value="error" selected>error</option>
+            <option value="warn">warn</option>
+          </select>
+        </label>
+      </div>
+      <div class="actions">
+        <button id="apply-btn">Apply validator</button>
+        <button id="status-btn" class="ghost">Refresh status</button>
+        <button id="drop-btn" class="danger">Drop collection</button>
+      </div>
+      <pre id="apply-result" class="result"></pre>
+    </section>
+
+    <section class="card">
+      <h2>2. Insert a document</h2>
+      <p>Edit the JSON below and submit. The server will pass it to MongoDB; any validator
+         failure will be surfaced verbatim.</p>
+      <textarea id="doc">{
+  "request_id": "test1",
+  "request_status": "COMPLETED",
+  "event": "XYZ",
+  "action": null,
+  "comments": " XYZ",
+  "file_path": null,
+  "channel": "ABC",
+  "schema_version": "v2",
+  "request_received_date_time": { "$date": "2026-03-17T16:52:16.881Z" }
+}</textarea>
+      <div class="actions">
+        <button id="insert-btn">Insert</button>
+        <button id="sample-missing-channel" class="ghost">Sample: missing channel (should fail on V2)</button>
+        <button id="sample-missing-id" class="ghost">Sample: missing request_id</button>
+      </div>
+      <pre id="insert-result" class="result"></pre>
+    </section>
+
+    <section class="card">
+      <h2>3. Recent documents</h2>
+      <div class="actions">
+        <button id="recent-btn">Load recent (10)</button>
+      </div>
+      <pre id="recent-result" class="result"></pre>
+    </section>
+
+    <section class="card">
+      <h2>Validators in use</h2>
+      <div class="two-col">
+        <div>
+          <h3>V1</h3>
+          <pre class="result">{{ v1 }}</pre>
+        </div>
+        <div>
+          <h3>V2</h3>
+          <pre class="result">{{ v2 }}</pre>
+        </div>
+      </div>
+      <p class="hint">
+        Reference:
+        <a href="https://learn.microsoft.com/en-us/documentdb/query/operators/evaluation-query/$jsonschema"
+           target="_blank" rel="noopener">MS Learn — <code>$jsonSchema</code></a>.
+        Unsupported keywords (<code>oneOf</code>, <code>anyOf</code>, <code>enum</code>, …) cannot
+        be expressed inside a single validator; use <code>collMod</code> + version pattern or split
+        collections to evolve schemas.
+      </p>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

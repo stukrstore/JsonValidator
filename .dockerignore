@@ -1,0 +1,10 @@
+.env
+.git
+.gitignore
+__pycache__
+*.pyc
+.venv
+venv
+README.md
+deploy
+.DS_Store
