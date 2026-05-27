@@ -92,10 +92,11 @@ if ! az containerapp show -n "$APP_NAME" -g "$RG" -o none 2>/dev/null; then
     --registry-server "$ACR_LOGIN_SERVER" \
     --registry-username "$ACR_USER" \
     --registry-password "$ACR_PASS" \
-    --secrets "mongodb-uri=$MONGODB_URI" "flask-secret=${FLASK_SECRET:-change-me}" \
+    --secrets "mongodb-uri=$MONGODB_URI" "flask-secret=${FLASK_SECRET:-change-me}" "app-password=${APP_PASSWORD:-admin1234}" \
     --env-vars \
       "MONGODB_URI=secretref:mongodb-uri" \
       "FLASK_SECRET=secretref:flask-secret" \
+      "APP_PASSWORD=secretref:app-password" \
       "MONGODB_DB=${MONGODB_DB:-jsonvalidator}" \
       "MONGODB_COLLECTION=${MONGODB_COLLECTION:-requests}" \
       "AOAI_ENDPOINT=${AOAI_ENDPOINT:-https://mskr-aoai-eastus.openai.azure.com/}" \
@@ -109,7 +110,7 @@ if ! az containerapp show -n "$APP_NAME" -g "$RG" -o none 2>/dev/null; then
 else
   echo "==> Updating container app $APP_NAME"
   az containerapp secret set -n "$APP_NAME" -g "$RG" \
-    --secrets "mongodb-uri=$MONGODB_URI" "flask-secret=${FLASK_SECRET:-change-me}" -o none
+    --secrets "mongodb-uri=$MONGODB_URI" "flask-secret=${FLASK_SECRET:-change-me}" "app-password=${APP_PASSWORD:-admin1234}" -o none
   az containerapp registry set -n "$APP_NAME" -g "$RG" \
     --server "$ACR_LOGIN_SERVER" --username "$ACR_USER" --password "$ACR_PASS" -o none
   az containerapp update \
@@ -118,6 +119,7 @@ else
     --set-env-vars \
       "MONGODB_URI=secretref:mongodb-uri" \
       "FLASK_SECRET=secretref:flask-secret" \
+      "APP_PASSWORD=secretref:app-password" \
       "MONGODB_DB=${MONGODB_DB:-jsonvalidator}" \
       "MONGODB_COLLECTION=${MONGODB_COLLECTION:-requests}" \
       "AOAI_ENDPOINT=${AOAI_ENDPOINT:-https://mskr-aoai-eastus.openai.azure.com/}" \

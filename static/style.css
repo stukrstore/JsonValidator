@@ -21,7 +21,20 @@ header {
   padding: 24px 32px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
+  position: relative;
 }
+.logout-link {
+  position: absolute;
+  top: 20px;
+  right: 24px;
+  font-size: 12.5px;
+  color: var(--muted);
+  text-decoration: none;
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+.logout-link:hover { color: var(--text); }
 header h1 { margin: 0 0 4px; font-size: 22px; }
 header p { margin: 0; color: var(--muted); font-size: 14px; }
 #status-bar { margin-top: 8px; font-size: 13px; color: var(--muted); }
@@ -170,3 +183,34 @@ main { margin-bottom: 12px; }
   resize: none;
 }
 .chat-form button { align-self: stretch; padding: 8px 18px; }
+
+/* ---- Login page ---- */
+.login-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+.login-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px 32px;
+  width: 100%;
+  max-width: 360px;
+}
+.login-card h1 { margin: 0 0 4px; font-size: 22px; }
+.login-card p  { color: var(--muted); font-size: 13.5px; margin: 0 0 18px; }
+.login-card form { display: flex; flex-direction: column; gap: 14px; }
+.login-card label { gap: 6px; font-size: 13px; }
+.login-card input[type=password] { width: 100%; }
+.login-card button { width: 100%; padding: 10px; font-size: 15px; }
+.login-error {
+  background: rgba(255,107,107,0.12);
+  color: var(--danger);
+  border: 1px solid rgba(255,107,107,0.35);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+}

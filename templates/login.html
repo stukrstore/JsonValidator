@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>JsonValidator — Sign in</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body class="login-body">
+  <main class="login-card">
+    <h1>JsonValidator</h1>
+    <p>This test page is password protected. Enter the access password to continue.</p>
+    <form method="post" action="{{ url_for('login') }}{% if next %}?next={{ next }}{% endif %}">
+      <input type="hidden" name="next" value="{{ next }}" />
+      <label>
+        Password
+        <input type="password" name="password" autocomplete="current-password" autofocus required />
+      </label>
+      {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
+      <button type="submit">Sign in</button>
+    </form>
+  </main>
+</body>
+</html>

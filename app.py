@@ -1,10 +1,11 @@
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, request
+from flask import (Flask, jsonify, redirect, render_template, request,
+                   session, url_for)
 from pymongo import MongoClient
 from pymongo.errors import OperationFailure, PyMongoError
 
@@ -28,8 +29,54 @@ AOAI_ENDPOINT = os.environ.get(
 AOAI_DEPLOYMENT = os.environ.get("AOAI_DEPLOYMENT", "gpt-5.3-codex")
 AOAI_API_VERSION = os.environ.get("AOAI_API_VERSION", "2025-04-01-preview")
 
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "admin1234")
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "dev-secret")
+app.permanent_session_lifetime = timedelta(hours=8)
+
+
+@app.before_request
+def _require_login():
+    if session.get("auth") is True:
+        return None
+    # Allow the login page itself, its POST, and static assets through.
+    if request.endpoint in {"login", "static"}:
+        return None
+    if request.path.startswith("/static/"):
+        return None
+    if request.path == "/login":
+        return None
+    # API calls get a JSON 401; pages get redirected to /login.
+    if request.path.startswith("/api/"):
+        return jsonify(ok=False, error="authentication required"), 401
+    return redirect(url_for("login", next=request.path))
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    error = None
+    if request.method == "POST":
+        if request.form.get("password") == APP_PASSWORD:
+            session.clear()
+            session["auth"] = True
+            session.permanent = True
+            nxt = request.args.get("next") or request.form.get("next") or "/"
+            if not nxt.startswith("/"):
+                nxt = "/"
+            return redirect(nxt)
+        error = "Invalid password."
+    return render_template(
+        "login.html",
+        error=error,
+        next=request.args.get("next", "/"),
+    )
+
+
+@app.route("/logout", methods=["POST", "GET"])
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
 _client: MongoClient | None = None
 
