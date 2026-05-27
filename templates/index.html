@@ -106,6 +106,23 @@
     </section>
   </main>
 
+  <section id="chat-panel" aria-label="AI assistant">
+    <header class="chat-header">
+      <div>
+        <h2>Ask the assistant</h2>
+        <p>Powered by Azure OpenAI <code>gpt-5.3-codex</code> (RBAC, no API key).
+           Ask anything about this page or request a <code>$jsonSchema</code> validator.</p>
+      </div>
+      <button id="chat-clear" class="ghost" type="button">Clear</button>
+    </header>
+    <div id="chat-log" class="chat-log" aria-live="polite"></div>
+    <form id="chat-form" class="chat-form">
+      <textarea id="chat-input" rows="2"
+        placeholder="e.g. Generate a $jsonSchema validator requiring 'orderId' and 'amount' >= 0"></textarea>
+      <button id="chat-send" type="submit">Send</button>
+    </form>
+  </section>
+
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

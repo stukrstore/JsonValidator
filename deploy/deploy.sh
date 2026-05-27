@@ -98,6 +98,9 @@ if ! az containerapp show -n "$APP_NAME" -g "$RG" -o none 2>/dev/null; then
       "FLASK_SECRET=secretref:flask-secret" \
       "MONGODB_DB=${MONGODB_DB:-jsonvalidator}" \
       "MONGODB_COLLECTION=${MONGODB_COLLECTION:-requests}" \
+      "AOAI_ENDPOINT=${AOAI_ENDPOINT:-https://mskr-aoai-eastus.openai.azure.com/}" \
+      "AOAI_DEPLOYMENT=${AOAI_DEPLOYMENT:-gpt-5.3-codex}" \
+      "AOAI_API_VERSION=${AOAI_API_VERSION:-2025-04-01-preview}" \
       "PORT=$TARGET_PORT" \
     --min-replicas 1 \
     --max-replicas 2 \
@@ -117,6 +120,9 @@ else
       "FLASK_SECRET=secretref:flask-secret" \
       "MONGODB_DB=${MONGODB_DB:-jsonvalidator}" \
       "MONGODB_COLLECTION=${MONGODB_COLLECTION:-requests}" \
+      "AOAI_ENDPOINT=${AOAI_ENDPOINT:-https://mskr-aoai-eastus.openai.azure.com/}" \
+      "AOAI_DEPLOYMENT=${AOAI_DEPLOYMENT:-gpt-5.3-codex}" \
+      "AOAI_API_VERSION=${AOAI_API_VERSION:-2025-04-01-preview}" \
       "PORT=$TARGET_PORT" \
     -o none
 fi

@@ -113,3 +113,93 @@ document.getElementById("recent-btn").addEventListener("click", async () => {
 });
 
 refreshStatus();
+
+// ---- Chat panel ----
+
+const chatLog = document.getElementById("chat-log");
+const chatForm = document.getElementById("chat-form");
+const chatInput = document.getElementById("chat-input");
+const chatSend = document.getElementById("chat-send");
+const chatClear = document.getElementById("chat-clear");
+const chatHistory = [];
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
+
+function renderMarkdownLite(text) {
+  const parts = [];
+  let last = 0;
+  const re = /```(\w+)?\n([\s\S]*?)```/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    parts.push(escapeHtml(text.slice(last, m.index)));
+    parts.push(`<pre><code>${escapeHtml(m[2])}</code></pre>`);
+    last = m.index + m[0].length;
+  }
+  parts.push(escapeHtml(text.slice(last)));
+  return parts.join("").replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+
+function appendMsg(role, text) {
+  const div = document.createElement("div");
+  div.className = `chat-msg ${role}`;
+  if (role === "assistant") {
+    div.innerHTML = renderMarkdownLite(text);
+  } else {
+    div.textContent = text;
+  }
+  chatLog.appendChild(div);
+  chatLog.scrollTop = chatLog.scrollHeight;
+  return div;
+}
+
+appendMsg("assistant",
+  "Hi! Ask me about anything on this page — applying validators, validationLevel/Action, " +
+  "or say e.g. \"generate a $jsonSchema validator that requires 'orderId' (string) and 'amount' (int >= 0)\".");
+
+chatForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = chatInput.value.trim();
+  if (!text) return;
+  appendMsg("user", text);
+  chatHistory.push({ role: "user", content: text });
+  chatInput.value = "";
+  chatSend.disabled = true;
+  const pending = appendMsg("assistant", "…");
+  try {
+    const r = await jsonFetch("/api/chat", {
+      method: "POST",
+      body: JSON.stringify({ messages: chatHistory }),
+    });
+    if (r.ok && r.body.ok) {
+      pending.innerHTML = renderMarkdownLite(r.body.reply || "(empty reply)");
+      chatHistory.push({ role: "assistant", content: r.body.reply || "" });
+    } else {
+      pending.className = "chat-msg error";
+      pending.textContent = `Error: ${r.body.error || r.status}`;
+    }
+  } catch (err) {
+    pending.className = "chat-msg error";
+    pending.textContent = `Error: ${err.message}`;
+  } finally {
+    chatSend.disabled = false;
+    chatLog.scrollTop = chatLog.scrollHeight;
+    chatInput.focus();
+  }
+});
+
+chatInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    chatForm.requestSubmit();
+  }
+});
+
+chatClear.addEventListener("click", () => {
+  chatHistory.length = 0;
+  chatLog.innerHTML = "";
+  appendMsg("assistant", "Cleared. Ask me anything about this page or request a validator.");
+});

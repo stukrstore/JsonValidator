@@ -8,11 +8,25 @@ from flask import Flask, jsonify, render_template, request
 from pymongo import MongoClient
 from pymongo.errors import OperationFailure, PyMongoError
 
+try:
+    from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+    from openai import AzureOpenAI
+    _AOAI_IMPORTS_OK = True
+except Exception as _aoai_imp_err:  # pragma: no cover
+    _AOAI_IMPORTS_OK = False
+    _AOAI_IMPORT_ERROR = str(_aoai_imp_err)
+
 load_dotenv()
 
 MONGODB_URI = os.environ.get("MONGODB_URI", "")
 MONGODB_DB = os.environ.get("MONGODB_DB", "jsonvalidator")
 MONGODB_COLLECTION = os.environ.get("MONGODB_COLLECTION", "requests")
+
+AOAI_ENDPOINT = os.environ.get(
+    "AOAI_ENDPOINT", "https://mskr-aoai-eastus.openai.azure.com/"
+)
+AOAI_DEPLOYMENT = os.environ.get("AOAI_DEPLOYMENT", "gpt-5.3-codex")
+AOAI_API_VERSION = os.environ.get("AOAI_API_VERSION", "2025-04-01-preview")
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "dev-secret")
@@ -360,6 +374,113 @@ def recent():
         return jsonify(ok=True, docs=docs)
     except PyMongoError as e:
         return jsonify(ok=False, error=str(e)), 500
+
+
+# ---- Chat (Azure OpenAI, gpt-5.3-codex, RBAC via Managed Identity) ----
+
+_DOCS_PATH = os.path.join(os.path.dirname(__file__), "docs",
+                          "jsonschema_reference.md")
+try:
+    with open(_DOCS_PATH, "r", encoding="utf-8") as _fh:
+        _JSONSCHEMA_REFERENCE = _fh.read()
+except OSError:
+    _JSONSCHEMA_REFERENCE = ""
+
+_CHAT_SYSTEM_PROMPT = f"""You are an assistant embedded in the JsonValidator
+test page for Azure Cosmos DB for MongoDB (vCore) `$jsonSchema` validators.
+
+Your job is to:
+1. Answer the user's questions about the features shown on this page
+   (applying validators V1/V2, validationLevel, validationAction, schema
+   versioning workarounds, server-side vs client-side enforcement, etc.).
+2. When asked, generate a `$jsonSchema` validator (a JSON object suitable
+   for `db.createCollection({{validator: ...}})` or `collMod`).
+
+Ground every answer in the DocumentDB documentation below. If a user asks
+for an unsupported keyword (e.g. `oneOf`, `anyOf`, `enum`,
+`additionalProperties`, `patternProperties`, `allOf`, `not`,
+`dependencies`, `min/maxProperties`, `title`), point out that DocumentDB
+does not support it and suggest the documented workaround.
+
+Always return generated validators as a fenced ```json code block. Be
+concise. Reply in the language the user uses (Korean or English).
+
+----- DocumentDB $jsonSchema reference -----
+{_JSONSCHEMA_REFERENCE}
+----- end reference -----
+"""
+
+
+_aoai_client = None
+_aoai_error = None
+
+
+def aoai_client():
+    """Lazily build an AzureOpenAI client using RBAC (no API key)."""
+    global _aoai_client, _aoai_error
+    if _aoai_client is not None or _aoai_error is not None:
+        return _aoai_client
+    if not _AOAI_IMPORTS_OK:
+        _aoai_error = (
+            f"openai/azure-identity not installed: {_AOAI_IMPORT_ERROR}"
+        )
+        return None
+    try:
+        token_provider = get_bearer_token_provider(
+            DefaultAzureCredential(),
+            "https://cognitiveservices.azure.com/.default",
+        )
+        _aoai_client = AzureOpenAI(
+            azure_endpoint=AOAI_ENDPOINT,
+            api_version=AOAI_API_VERSION,
+            azure_ad_token_provider=token_provider,
+        )
+        return _aoai_client
+    except Exception as e:  # pragma: no cover
+        _aoai_error = f"failed to init AzureOpenAI: {e}"
+        return None
+
+
+@app.route("/api/chat", methods=["POST"])
+def chat():
+    payload = request.json or {}
+    history = payload.get("messages") or []
+    if not isinstance(history, list) or not history:
+        return jsonify(ok=False, error="messages must be a non-empty list"), 400
+
+    cleaned = []
+    for m in history[-12:]:
+        role = m.get("role")
+        content = m.get("content")
+        if role in ("user", "assistant") and isinstance(content, str) and content.strip():
+            cleaned.append({"role": role, "content": content[:4000]})
+    if not cleaned or cleaned[-1]["role"] != "user":
+        return jsonify(ok=False, error="last message must be from user"), 400
+
+    cli = aoai_client()
+    if cli is None:
+        return jsonify(ok=False, error=_aoai_error or "AOAI client unavailable"), 500
+
+    messages = [{"role": "system", "content": _CHAT_SYSTEM_PROMPT}] + cleaned
+    try:
+        resp = cli.responses.create(
+            model=AOAI_DEPLOYMENT,
+            input=messages,
+            max_output_tokens=1500,
+        )
+        reply = (getattr(resp, "output_text", "") or "").strip()
+        if not reply:
+            # Fallback: walk the output items.
+            parts = []
+            for item in getattr(resp, "output", []) or []:
+                for c in getattr(item, "content", []) or []:
+                    t = getattr(c, "text", None)
+                    if t:
+                        parts.append(t)
+            reply = "\n".join(parts).strip() or "(empty reply)"
+        return jsonify(ok=True, reply=reply, model=AOAI_DEPLOYMENT)
+    except Exception as e:  # pragma: no cover
+        return jsonify(ok=False, error=f"chat failed: {e}"), 500
 
 
 if __name__ == "__main__":
