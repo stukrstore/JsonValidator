@@ -169,17 +169,54 @@ chatForm.addEventListener("submit", async (e) => {
   chatInput.value = "";
   chatSend.disabled = true;
   const pending = appendMsg("assistant", "…");
+  let acc = "";
   try {
-    const r = await jsonFetch("/api/chat", {
+    const res = await fetch("/api/chat", {
       method: "POST",
-      body: JSON.stringify({ messages: chatHistory }),
+      headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
+      body: JSON.stringify({ messages: chatHistory, stream: true }),
     });
-    if (r.ok && r.body.ok) {
-      pending.innerHTML = renderMarkdownLite(r.body.reply || "(empty reply)");
-      chatHistory.push({ role: "assistant", content: r.body.reply || "" });
-    } else {
+    if (!res.ok || !res.body) {
+      let detail = `HTTP ${res.status}`;
+      try { const j = await res.json(); detail = j.error || detail; } catch {}
       pending.className = "chat-msg error";
-      pending.textContent = `Error: ${r.body.error || r.status}`;
+      pending.textContent = `Error: ${detail}`;
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    let errored = false;
+    pending.textContent = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) !== -1) {
+        const evt = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        for (const line of evt.split("\n")) {
+          if (!line.startsWith("data:")) continue;
+          const data = line.slice(5).trim();
+          if (!data) continue;
+          let obj;
+          try { obj = JSON.parse(data); } catch { continue; }
+          if (obj.delta) {
+            acc += obj.delta;
+            pending.innerHTML = renderMarkdownLite(acc);
+            chatLog.scrollTop = chatLog.scrollHeight;
+          } else if (obj.error) {
+            pending.className = "chat-msg error";
+            pending.textContent = `Error: ${obj.error}`;
+            errored = true;
+          }
+        }
+      }
+    }
+    if (!errored) {
+      chatHistory.push({ role: "assistant", content: acc });
+      if (!acc) pending.textContent = "(empty reply)";
     }
   } catch (err) {
     pending.className = "chat-msg error";

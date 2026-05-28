@@ -4,8 +4,8 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
-from flask import (Flask, jsonify, redirect, render_template, request,
-                   session, url_for)
+from flask import (Flask, Response, jsonify, redirect, render_template,
+                   request, session, stream_with_context, url_for)
 from pymongo import MongoClient
 from pymongo.errors import OperationFailure, PyMongoError
 
@@ -509,6 +509,38 @@ def chat():
         return jsonify(ok=False, error=_aoai_error or "AOAI client unavailable"), 500
 
     messages = [{"role": "system", "content": _CHAT_SYSTEM_PROMPT}] + cleaned
+    want_stream = bool(payload.get("stream"))
+
+    if want_stream:
+        def event_stream():
+            try:
+                with cli.responses.stream(
+                    model=AOAI_DEPLOYMENT,
+                    input=messages,
+                    max_output_tokens=1500,
+                ) as stream:
+                    for event in stream:
+                        etype = getattr(event, "type", "")
+                        if etype == "response.output_text.delta":
+                            delta = getattr(event, "delta", "") or ""
+                            if delta:
+                                yield "data: " + json.dumps({"delta": delta}) + "\n\n"
+                        elif etype in ("response.error", "error"):
+                            err = getattr(event, "error", None) or str(event)
+                            yield "data: " + json.dumps({"error": str(err)}) + "\n\n"
+                yield "data: " + json.dumps({"done": True}) + "\n\n"
+            except Exception as e:  # pragma: no cover
+                yield "data: " + json.dumps({"error": f"chat failed: {e}"}) + "\n\n"
+
+        return Response(
+            stream_with_context(event_stream()),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     try:
         resp = cli.responses.create(
             model=AOAI_DEPLOYMENT,
@@ -517,7 +549,6 @@ def chat():
         )
         reply = (getattr(resp, "output_text", "") or "").strip()
         if not reply:
-            # Fallback: walk the output items.
             parts = []
             for item in getattr(resp, "output", []) or []:
                 for c in getattr(item, "content", []) or []:
