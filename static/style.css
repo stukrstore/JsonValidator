@@ -109,29 +109,29 @@ button.danger { background: var(--danger); }
 a { color: var(--accent); }
 @media (max-width: 720px) { .two-col { grid-template-columns: 1fr; } }
 
-/* ---- Chat panel (bottom 1/3 of viewport) ---- */
-body { padding-bottom: 36vh; }
-main { margin-bottom: 12px; }
+/* ---- Chat panel (right ~1/4 of viewport) ---- */
+body { padding-right: 26vw; }
+main { margin-bottom: 24px; }
 
 #chat-panel {
   position: fixed;
-  left: 0;
+  top: 0;
   right: 0;
   bottom: 0;
-  height: 34vh;
-  min-height: 240px;
+  width: 26vw;
+  min-width: 320px;
   background: var(--panel);
-  border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   z-index: 50;
-  box-shadow: 0 -6px 24px rgba(0,0,0,0.35);
+  box-shadow: -6px 0 24px rgba(0,0,0,0.35);
 }
 #chat-panel .chat-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 20px;
+  padding: 14px 18px;
   border-bottom: 1px solid var(--border);
 }
 #chat-panel .chat-header h2 { margin: 0; font-size: 15px; }
@@ -140,14 +140,14 @@ main { margin-bottom: 12px; }
 .chat-log {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 20px;
+  padding: 12px 16px;
   display: flex;
   flex-direction: column;
   gap: 10px;
   font-size: 13.5px;
 }
 .chat-msg {
-  max-width: 88%;
+  max-width: 100%;
   padding: 8px 12px;
   border-radius: 10px;
   border: 1px solid var(--border);
@@ -155,7 +155,7 @@ main { margin-bottom: 12px; }
   white-space: pre-wrap;
   word-break: break-word;
 }
-.chat-msg.user      { align-self: flex-end; background: #18283f; border-color: #2c4a78; }
+.chat-msg.user      { align-self: flex-end;   background: #18283f; border-color: #2c4a78; }
 .chat-msg.assistant { align-self: flex-start; }
 .chat-msg.error     { align-self: flex-start; border-color: var(--danger); color: var(--danger); }
 .chat-msg pre {
@@ -174,15 +174,29 @@ main { margin-bottom: 12px; }
 .chat-form {
   display: flex;
   gap: 8px;
-  padding: 10px 20px 14px;
+  padding: 10px 16px 14px;
   border-top: 1px solid var(--border);
 }
 .chat-form textarea {
   flex: 1;
   min-height: 44px;
+  min-width: 0;
   resize: none;
 }
-.chat-form button { align-self: stretch; padding: 8px 18px; }
+.chat-form button { align-self: stretch; padding: 8px 14px; }
+
+@media (max-width: 900px) {
+  body { padding-right: 0; padding-bottom: 36vh; }
+  #chat-panel {
+    top: auto;
+    width: 100%;
+    height: 34vh;
+    min-height: 240px;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -6px 24px rgba(0,0,0,0.35);
+  }
+}
 
 /* ---- Login page ---- */
 .login-body {
